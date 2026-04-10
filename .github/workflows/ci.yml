@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    name: Lint & Test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell modules
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module -Name Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
+
+      - name: Validate module manifest
+        shell: pwsh
+        run: |
+          $manifest = Test-ModuleManifest -Path ./azure-toolkit.psd1 -ErrorAction Stop
+          Write-Host "Module: $($manifest.Name) v$($manifest.Version)"
+          Write-Host "Functions exported: $($manifest.ExportedFunctions.Count)"
+          if ($manifest.ExportedFunctions.Count -eq 0) {
+            throw "No functions exported from module manifest."
+          }
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path ./src -Recurse -Severity Error,Warning
+          if ($results) {
+            $results | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found $($results.Count) issues."
+          }
+          Write-Host "PSScriptAnalyzer: No issues found." -ForegroundColor Green
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Output.Verbosity = 'Detailed'
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.Path = @('./src/modules')
+          $config.CodeCoverage.OutputFormat = 'CoverageGutters'
+          $config.CodeCoverage.OutputPath = './coverage.xml'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = './test-results.xml'
+          $config.TestResult.OutputFormat = 'NUnitXml'
+
+          $result = Invoke-Pester -Configuration $config
+
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) test(s) failed."
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results.xml
+            coverage.xml
+
+      - name: Post test summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path './test-results.xml') {
+            [xml]$results = Get-Content './test-results.xml'
+            $total = $results.'test-results'.'@total'
+            $passed = $results.'test-results'.'@passed'
+            $failed = $results.'test-results'.'@failed'
+            Write-Host "Tests: $total total | $passed passed | $failed failed"
+          }

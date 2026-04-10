@@ -1,0 +1,15 @@
+# Config with secrets
+config/toolkit-config.json
+
+# Test output
+test-results.xml
+coverage.xml
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
